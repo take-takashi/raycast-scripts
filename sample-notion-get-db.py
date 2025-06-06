@@ -193,19 +193,48 @@ def change_page_title(page_id: str, new_title: str) -> bool:
 
 # 指定したNotionページの末尾にファイルをアップロードする関数
 def upload_file_to_notion(page_id: str, filepath: str) -> None:
-    # TODO: 20MBを超えるファイルのアップロード
+    """
+    指定したファイルをNotionにアップロードし、指定ページの末尾に添付します。
+    この関数はNotion API仕様に従い、20MB以下はsingle_part、20MB超はmulti_partでアップロードします。
+    ファイルアップロードオブジェクトの作成、ファイル本体のアップロード（分割対応）、ページへの添付までを行います。
+
+    引数:
+        page_id (str): ファイルを添付するNotionページのID。
+        filepath (str): アップロードするファイルのパス。
+
+    例外:
+        いずれかの処理で失敗した場合は例外を投げます（詳細なエラーメッセージ付き）。
+
+    備考:
+        - グローバル変数 NOTION_TOKEN, NOTION_VERSION を利用します。
+        - 補助関数 get_mime_type_from_extension(filepath) を利用し、MIMEタイプとファイルタイプを取得します。
+        - 進捗やエラーは log 関数で出力します。
+        - Notion APIのエンドポイントやペイロードは現行APIバージョンに準拠してください。
+    """
     try:
         # 20MB 以下なら single_part、20MB 超なら multi_part とする（Notion APIの仕様）
         file_size = os.path.getsize(filepath)
         file_name = os.path.basename(filepath)
         mode = "single_part" if file_size <= 20 * 1024 * 1024 else "multi_part"
+        CHUNK_SIZE = 10 * 1024 * 1024  # 10MB
 
         mime_type_info = get_mime_type_from_extension(filepath)
+        payload = {}
 
         # Step 1: Create a File Upload object
-        payload ={
-            "filename": file_name,
-        }
+        if mode == "single_part":
+            payload ={
+                "filename": file_name,
+            }
+        elif mode == "multi_part":
+            # 10MBごとの分割数を計算
+            number_of_parts = (file_size + CHUNK_SIZE - 1) // CHUNK_SIZE
+            payload = {
+                "filename": file_name,
+                "content_type": mime_type_info.mime_type,
+                "mode": "multi_part",
+                "number_of_parts": number_of_parts
+            }
 
         file_create_response = requests.post("https://api.notion.com/v1/file_uploads",
                                              json=payload,
@@ -222,27 +251,72 @@ def upload_file_to_notion(page_id: str, filepath: str) -> None:
             )
         
         file_upload_id = json.loads(file_create_response.text)['id']
+        log(f"File upload ID: {file_upload_id}")
 
         # Step 2: Upload file contents
-        with open(filepath, "rb") as f:
-            # Provide the MIME content type of the file as the 3rd argument.
-            files = {
-                "file": (file_name, f, mime_type_info.mime_type)
-            }
+        if mode == "single_part":
+            with open(filepath, "rb") as f:
+                # Provide the MIME content type of the file as the 3rd argument.
+                files = {
+                    "file": (file_name, f, mime_type_info.mime_type)
+                }
 
-            response = requests.post(
-                f"https://api.notion.com/v1/file_uploads/{file_upload_id}/send",
-                headers={
-                    "Authorization": f"Bearer {NOTION_TOKEN}",
-                    "Notion-Version": NOTION_VERSION
-                },
-                files=files
-            )
+                response = requests.post(
+                    f"https://api.notion.com/v1/file_uploads/{file_upload_id}/send",
+                    headers={
+                        "Authorization": f"Bearer {NOTION_TOKEN}",
+                        "Notion-Version": NOTION_VERSION
+                    },
+                    files=files
+                )
+
+                if response.status_code != 200:
+                    raise Exception(
+                        f"File upload failed with status code {response.status_code}: {response.text}")
+        
+        elif mode == "multi_part":
+            url = f"https://api.notion.com/v1/file_uploads/{file_upload_id}/send"
+            headers = {
+                "Authorization": f"Bearer {NOTION_TOKEN}",
+                "Notion-Version": NOTION_VERSION
+            }
+            with open(filepath, "rb") as f:
+                # チャンクサイズごとにファイルを読み込む
+                for part_number in range(1, number_of_parts+1):
+                    chunk = f.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+
+                    files = {
+                        # Provide the MIME content type of the file
+                        # as the 3rd argument.
+                        "file": (file_name, chunk, mime_type_info.mime_type),
+                        # Use a file name of `None` to treat this as a regular
+                        # form field and not a file.
+                        "part_number": (None, str(part_number))
+                    }
+                    log(f"Uploading part {part_number} of {number_of_parts}...")
+
+                    # ファイルのチャンクをアップロード
+                    response = requests.post(url, headers=headers, files=files)
+
+                    if response.status_code != 200:
+                        raise Exception(f"Failed to upload part {part_number}: {response.status_code} - {response.text}")
+
+            # 全チャンクのアップロードが成功した場合は、完了通知を送信
+            url = f"https://api.notion.com/v1/file_uploads/{file_upload_id}/complete"
+            headers = {
+                "accept": "application/json",
+                "Authorization": f"Bearer {NOTION_TOKEN}",
+                "Notion-Version": NOTION_VERSION
+            }
+            response = requests.post(url, headers=headers)
 
             if response.status_code != 200:
                 raise Exception(
-                    f"File upload failed with status code {response.status_code}: {response.text}")
-            
+                    f"Failed to complete file upload with status code {response.status_code}: {response.text}"
+                )
+
         # Step 3: Attach the file to a page or block
 
         url = f"https://api.notion.com/v1/blocks/{page_id}/children"
@@ -323,6 +397,7 @@ def get_mime_type_from_extension(filepath: str) -> MimeTypeInfo:
         ".jpeg": MimeTypeInfo(mime_type="image/jpeg", file_type="image"),
         ".png": MimeTypeInfo(mime_type="image/png", file_type="image"),
         ".gif": MimeTypeInfo(mime_type="image/gif", file_type="image"),
+        ".webp": MimeTypeInfo(mime_type="image/webp", file_type="image"),
     }
     return mime_types.get(extension, MimeTypeInfo(mime_type="application/octet-stream", file_type="image"))
 
