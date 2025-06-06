@@ -15,11 +15,11 @@ load_dotenv()
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 NOTION_VERSION = "2022-06-28"
+LOG_DIR = os.getenv("LOG_DIR", "~")
 
 # ログ設定
 today = datetime.datetime.now().strftime("%Y%m%d")
-# TODO: ログの保存先を.envで定義
-log_path = os.path.expanduser(f"~/Downloads/sample-notion-get-db-log-{today}.txt")
+log_path = os.path.expanduser(f"{LOG_DIR}/sample-notion-get-db-log-{today}.txt")
 logging.basicConfig(
     filename=log_path,
     filemode='a',
@@ -85,8 +85,7 @@ def get_items(database_id) -> list:
     
     # 何かしらのエラーが発生した場合は空のリストを返す
     except Exception as e:
-        log(f"Error retrieving items: {e}", level="error")
-        return []
+        raise Exception(f"Notionデータベースの取得に失敗しました: {e}")
 
 # アイテムのプロパティからURLを取得する関数
 def get_item_propertie_url(item) -> str:
@@ -97,8 +96,7 @@ def get_item_propertie_url(item) -> str:
         else:
             return None
     except Exception as e:
-        log(f"Error retrieving URL from item: {e}", level="error")
-        return None
+        raise Exception(f"アイテムのプロパティからURLを取得できませんでした: {e}")
 
 # 動画ファイル、サムネイルファイルをダウンロードして情報を返す関数
 def download_file(url: str, output_dir: str = "~/Downloads") -> VideoInfo:
@@ -124,7 +122,6 @@ def download_file(url: str, output_dir: str = "~/Downloads") -> VideoInfo:
                     thumbnail_filepath = thumb["filepath"]
                     break
 
-            log(f"✅ ダウンロード成功: {video_filepath}")
             return VideoInfo(
                 video_title=video_title,
                 video_filepath=video_filepath,
@@ -132,8 +129,7 @@ def download_file(url: str, output_dir: str = "~/Downloads") -> VideoInfo:
             )
 
     except Exception as e:
-        log(f"Error downloading file from URL {url}: {e}", level="error")
-        return None
+        raise Exception(f"URL「{url}」の動画のダウンロードに失敗しました: {e}")
 
 # 指定したNotionページ内のすべての子ブロック（コンテンツ）を削除する関数
 def delete_page_content(page_id: str) -> bool:
@@ -159,8 +155,7 @@ def delete_page_content(page_id: str) -> bool:
         return True
 
     except Exception as e:
-        log(f"Error deleting content from page {page_id}: {e}", level="error")
-        return False
+        raise Exception(f"ページID「 {page_id}」のコンテンツ削除に失敗しました: {e}")
 
 # 指定したNotionページのタイトルを変更する関数
 def change_page_title(page_id: str, new_title: str) -> bool:
@@ -194,8 +189,7 @@ def change_page_title(page_id: str, new_title: str) -> bool:
         return True
 
     except Exception as e:
-        log(f"Error changing title for page {page_id}: {e}", level="error")
-        return False
+        raise Exception(f"ページID「{page_id}」のタイトル変更に失敗しました: {e}")
 
 # 指定したNotionページの末尾にファイルをアップロードする関数
 def upload_file_to_notion(page_id: str, filepath: str) -> None:
@@ -301,10 +295,8 @@ def upload_file_to_notion(page_id: str, filepath: str) -> None:
                 f"Failed to attach file to page with status code {response.status_code}: {response.text}"
             )
 
-        log(f"✅ Notionにアップロード完了: {file_name}")
-
     except Exception as e:
-        log(f"❌ Notionへのアップロード失敗: {e}", level="error")
+        raise Exception(f"Notionへのアップロードに失敗しました: {e}")
 
 # ファイルパスの拡張子が.imageの場合、.jpgに名称変更する関数
 def rename_image2jpg_extension(filepath: str) -> str:
@@ -318,7 +310,7 @@ def rename_image2jpg_extension(filepath: str) -> str:
     if filepath.endswith(".image"):
         new_filepath = filepath[:-6] + ".jpg"
         os.rename(filepath, new_filepath)
-        log(f"✅ 拡張子が「.image」だったのでファイル名を変更しました: {filepath} -> {new_filepath}")
+        # log(f"✅ 拡張子が「.image」だったのでファイル名を変更しました: {filepath} -> {new_filepath}")
         return new_filepath
     return filepath
 
@@ -353,81 +345,78 @@ def change_item_processed_status(
                 }
             }
         )
-        log(f"✅ アイテム {item_id} の「{property_name}」ステータスを更新しました。")
         return True
     
     except Exception as e:
-        log(f"❌ アイテム {item_id} の「{property_name}」ステータス更新に失敗: {e}", level="error")
-        return False
+        raise Exception(f"アイテムID「 {item_id}」の「{property_name}」ステータス更新に失敗: {e}")
 
 # ======== Entry Point =========================================================
 def main() -> None:
-    # データベースからアイテムを取得
-    items = get_items(NOTION_DATABASE_ID)
+    try:
+        log("===== スクリプトを開始します。")
+        # データベースからアイテムを取得
+        items = get_items(NOTION_DATABASE_ID)
 
-    if not items:
-        log("⚠️Notionデータベースに対象のアイテムがありません。", level="warning")
-        return
-
-    for item in items:
-        # TODO: tryで囲って、logはすべてここで行うようにする
-        # アイテムのプロパティからURLを取得
-        log(f"▶ アイテムID「{item['id']}」の処理を開始します。")
-        url = get_item_propertie_url(item)
-
-        if url is None:
-            log(f"❌ アイテム {item['id']} に「URL」プロパティがありません。", level="error")
+        if not items:
+            log("⚠️Notionデータベースに対象のアイテムがありません。", level="warning")
             return
-        log(f"▶ アイテムID「{item['id']}」のURL: {url}")
 
-        # URLからファイルをダウンロード
-        log(f"▶ URL「{url}」の動画をダウンロード中...")
-        video_info: VideoInfo = download_file(url)
+        for item in items:
+            # アイテムのプロパティからURLを取得
+            log(f"▶ アイテムID「{item['id']}」の処理を開始します。")
+            url = get_item_propertie_url(item)
 
-        log(f"ダウンロードした動画のタイトル: {video_info.video_title}")
-        log(f"ダウンロードした動画のファイルパス: {video_info.video_filepath}")
-        log(f"ダウンロードしたサムネイルのファイルパス: {video_info.thumbnail_filepath}")
+            if url is None:
+                log(f"⚠️ アイテム {item['id']} に「URL」プロパティがありません。", level="warning")
+                continue
+            log(f"▶ アイテムID「{item['id']}」のURL: {url}")
 
-        if not video_info.video_filepath:
-            log(f"❌ URL「{url}」のダウンロードに失敗しました。", level="error")
-            continue
-        log(f"✅ URL「{url}」のダウンロードが完了しました。")
+            # URLからファイルをダウンロード
+            log(f"▶ URL「{url}」の動画をダウンロード中...")
+            video_info: VideoInfo = download_file(url)
+            log(f"ダウンロードした動画のタイトル: {video_info.video_title}")
+            log(f"ダウンロードした動画のファイルパス: {video_info.video_filepath}")
+            log(f"ダウンロードしたサムネイルのファイルパス: {video_info.thumbnail_filepath}")
+            log(f"✅ URL「{url}」のダウンロードが完了しました。")
 
-        # ダウンロードが完了したらNotionのページ内のコンテンツを削除
-        # TODO: Xからのダウンロードはコンテンツを削除しないようにする
-        log(f"▶ アイテムID「{item['id']}」のページコンテンツを削除中...")
-        if not delete_page_content(item["id"]):
-            log(f"❌ ページのコンテンツ削除失敗: {item['id']}", level="error")
-            # コンテンツの削除に失敗しても取り急ぎ次に進む
+            # ダウンロードが完了したらNotionのページ内のコンテンツを削除
+            # TODO: Xからのダウンロードはコンテンツを削除しないようにする
+            log(f"▶ アイテムID「{item['id']}」のページコンテンツを削除中...")
+            delete_page_content(item["id"])
+            log(f"✅ アイテムID「{item['id']}」のページコンテンツを削除しました。")
 
-        # ダウンロードが完了したらNotionのページタイトルを動画のタイトルに変更
-        log(f"▶ アイテムID「{item['id']}」のページタイトルを変更中...")
-        if not change_page_title(item["id"], video_info.video_title):
-            log(f"❌ ページタイトルの変更失敗: {item['id']}", level="error")
-            # タイトルの変更に失敗しても取り急ぎ次に進む
+            # ダウンロードが完了したらNotionのページタイトルを動画のタイトルに変更
+            log(f"▶ ページタイトルを変更中...")
+            change_page_title(item["id"], video_info.video_title)
+            log(f"✅ ページタイトルを「{video_info.video_title}」に変更しました。")
 
-        # ファイルがダウンロードできたら、Notionに動画をアップロード
-        log(f"▶ アイテムID「{item['id']}」の動画をNotionにアップロード中...")
-        upload_file_to_notion(item["id"], video_info.video_filepath)
+            # ファイルがダウンロードできたら、Notionに動画をアップロード
+            log(f"▶ ファイル「{video_info.video_filepath}」の動画をNotionにアップロード中...")
+            upload_file_to_notion(item["id"], video_info.video_filepath)
+            log(f"✅ ファイル「{video_info.video_filepath}」の動画のアップロードが完了しました。")
 
-        # サムネイルの拡張子が.imageなら.jpgに変更
-        log(f"▶ アイテムID「{item['id']}」のサムネイルの拡張子を確認中...")
-        video_info.thumbnail_filepath = rename_image2jpg_extension(video_info.thumbnail_filepath)
+            # サムネイルの拡張子が.imageなら.jpgに変更
+            log(f"▶ ファイル「{video_info.thumbnail_filepath}」のサムネイルの拡張子を確認中...")
+            video_info.thumbnail_filepath = rename_image2jpg_extension(video_info.thumbnail_filepath)
+            log(f"✅ ファイル「{video_info.thumbnail_filepath}」のサムネイルの拡張子を確認・変更しました。")
 
-        # 動画のアップロードの次に画像を添付する
-        log(f"▶ アイテムID「{item['id']}」のサムネイルをNotionにアップロード中...")
-        upload_file_to_notion(item["id"], video_info.thumbnail_filepath)
+            # 動画のアップロードの次に画像を添付する
+            log(f"▶ アイテムID「{item['id']}」のサムネイルをNotionにアップロード中...")
+            upload_file_to_notion(item["id"], video_info.thumbnail_filepath)
+            log(f"✅ アイテムID「{item['id']}」のサムネイルのアップロードが完了しました。")
 
-        # アイテムのプロパティ「処理済」をチェックにする
-        log(f"▶ アイテムID「{item['id']}」の「処理済」ステータスを更新中...")
-        if not change_item_processed_status(item["id"]):
-            log(f"❌ アイテム {item['id']} の「処理済」ステータス更新に失敗", level="error")
-            # ステータスの更新に失敗しても取り急ぎ次に進む
-        
-        log(f"✅ アイテム {item['id']} の処理が完了しました。")
-        # Continue
+            # アイテムのプロパティ「処理済」をチェックにする
+            log(f"▶ アイテムID「{item['id']}」の「処理済」ステータスを更新中...")
+            change_item_processed_status(item["id"])
+            log(f"✅ アイテムID「{item['id']}」の「処理済」ステータスを更新しました。")
+            
+            log(f"✅ アイテムID {item['id']} の処理が完了しました。")
+            # Continue
 
-    log("すべてのアイテムの処理が完了しました。")
+        log("すべてのアイテムの処理が完了しました。")
+    except Exception as e:
+        log(e, level="error")
+        return
 # End
 
 # ======== Main End ============================================================
