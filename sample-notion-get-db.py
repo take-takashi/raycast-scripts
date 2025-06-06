@@ -18,6 +18,7 @@ NOTION_VERSION = "2022-06-28"
 
 # ログ設定
 today = datetime.datetime.now().strftime("%Y%m%d")
+# TODO: ログの保存先を.envで定義
 log_path = os.path.expanduser(f"~/Downloads/sample-notion-get-db-log-{today}.txt")
 logging.basicConfig(
     filename=log_path,
@@ -102,26 +103,15 @@ def get_item_propertie_url(item) -> str:
 # 動画ファイル、サムネイルファイルをダウンロードして情報を返す関数
 def download_file(url: str, output_dir: str = "~/Downloads") -> VideoInfo:
     outtmpl = f"{output_dir}/%(title)s_%(id)s.%(ext)s"
-    ydl_opts = {}
+
+    ydl_opts = {
+        "outtmpl": outtmpl,
+        "writethumbnail": True,  # typo fixed from "writethiumbnail"
+        "format": "bv[ext=mp4]+ba[ext=m4a]/bv+ba/best[ext=mp4]/best",
+        "age_limit": 1985
+    }
 
     try:
-        # TODO: パラメータを統合できるはず
-        if "tiktok.com" in url:
-            print(f"▶ TikTok URL detected: {url}")
-            ydl_opts = {
-                "outtmpl": outtmpl,
-                "writethumbnail": True,
-                "format": "best"
-            }
-        else:
-            print(f"▶ Other URL: {url}")
-            ydl_opts = {
-                "outtmpl": outtmpl,
-                "writethumbnail": True,  # typo fixed from "writethiumbnail"
-                "format": "bv[ext=mp4]+ba[ext=m4a]/bv+ba/best[ext=mp4]/best",
-                "age_limit": 1985
-            }
-
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             video_title = info.get("title")
@@ -404,6 +394,7 @@ def main() -> None:
         log(f"✅ URL「{url}」のダウンロードが完了しました。")
 
         # ダウンロードが完了したらNotionのページ内のコンテンツを削除
+        # TODO: Xからのダウンロードはコンテンツを削除しないようにする
         log(f"▶ アイテムID「{item['id']}」のページコンテンツを削除中...")
         if not delete_page_content(item["id"]):
             log(f"❌ ページのコンテンツ削除失敗: {item['id']}", level="error")
