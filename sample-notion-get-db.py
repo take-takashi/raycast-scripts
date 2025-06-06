@@ -380,10 +380,14 @@ def main() -> None:
             log(f"✅ URL「{url}」のダウンロードが完了しました。")
 
             # ダウンロードが完了したらNotionのページ内のコンテンツを削除
-            # TODO: Xからのダウンロードはコンテンツを削除しないようにする
-            log(f"▶ アイテムID「{item['id']}」のページコンテンツを削除中...")
-            delete_page_content(item["id"])
-            log(f"✅ アイテムID「{item['id']}」のページコンテンツを削除しました。")
+            # Xからのダウンロードはコンテンツを削除しないようにする
+            if url.startswith("https://x.com/"):
+                log(f"⚠️ URL「{url}」はXからのダウンロードのため、コンテンツを削除しません。")
+            else:
+                log(f"▶ アイテムID「{item['id']}」のページコンテンツを削除中...")
+                delete_page_content(item["id"])
+                log(f"✅ アイテムID「{item['id']}」のページコンテンツを削除しました。")
+            # end if
 
             # ダウンロードが完了したらNotionのページタイトルを動画のタイトルに変更
             log(f"▶ ページタイトルを変更中...")
